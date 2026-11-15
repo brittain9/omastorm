@@ -101,3 +101,15 @@ assert.equal(json(Location.overlay({lat: 35.4, lon: -97.5, span: 50}, null, 'new
 assert.equal(json(Location.stateObject(35.4, -97.5, 50, null, '', null, 'new', true)),
   json({lat: 35.4, lon: -97.5, span: 50}), 'stateObject writes no scan without a site');
 console.log('Pure UI location, config, key binding and METAR regressions PASS');
+
+// Refresh seconds: defaults, configured intervals, disabled background and invalid values.
+for (const [value, background, expected, errors] of [
+    [undefined, true, 900, 0], [undefined, false, 10, 0], [1200, true, 1200, 0],
+    [0, true, 0, 0], [5, false, 5, 0], [2, false, 10, 1], [0, false, 10, 1],
+    [59, true, 900, 1], [86401, true, 900, 1], [10.5, false, 10, 1],
+    ['10', false, 10, 1], [true, false, 10, 1], [NaN, true, 900, 1],
+]) {
+    const problems = [];
+    assert.equal(Keys.refreshSeconds(value, background, problems), expected);
+    assert.equal(problems.length, errors);
+}

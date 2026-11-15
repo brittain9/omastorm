@@ -264,6 +264,21 @@ rediscovery. A rediscovery that finds only a sweep already in the catalog
 leaves the frame and connection chrome alone; a newer volume still clears
 UNAVAILABLE / OFFLINE.
 
+
+### Configurable acquisition cadence
+
+The shared engine defaults to a newest-picture background refresh every 900
+seconds and update checks every 10 seconds while any radar viewer is visible.
+Opening a viewer refreshes immediately. The top-level `background_refresh_seconds`
+and `active_refresh_seconds` preferences control this tradeoff; background 0
+means on-demand only. Background snapshots skip history, rediscover the newest
+NEXRAD volume, and preserve cached frames and their actual age. Visibility belongs
+to each connection, so closing one output cannot put another open viewer to
+sleep. Map and METAR requests retain their existing separate rules. See
+[configuration](docs/configuration.md#radar-refresh-cadence) and the additive
+[`set_polling` command](docs/protocol.md#per-client-refresh-policy).
+
+
 ## Scope
 
 Keep the feature set small. Prefer the weather panel, the theme, and the

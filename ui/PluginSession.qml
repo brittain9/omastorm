@@ -10,7 +10,10 @@ QtObject {
     id: session
     // One non-map connection keeps the bar current, including on multiple
     // outputs. Visible maps have separate sockets for their tile rectangles.
-    property Engine engine: Engine {}
+    property Engine engine: Engine {
+        backgroundRefreshSeconds: session.config.backgroundRefreshSeconds
+        activeRefreshSeconds: session.config.activeRefreshSeconds
+    }
     property Config config: Config {}
     property Remembered remembered: Remembered {}
     property Theme theme: Theme {}

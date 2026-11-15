@@ -939,3 +939,43 @@ fn metar_query_is_a_sender_reply() {
     assert_eq!(s["navigation"]["locked"], true);
     assert!(s.get("error").is_none());
 }
+
+#[test]
+fn polling_capability_and_invalid_preferences_are_connection_scoped() {
+    let engine = Engine::start();
+    let mut viewer = engine.connect();
+    let hello = read(&mut viewer);
+    assert_eq!(hello["pollingConfig"], true);
+    let before = read(&mut viewer);
+    send(
+        &mut viewer,
+        json!({"type":"set_polling", "visible":true,
+        "backgroundSeconds":1200,"activeSeconds":5}),
+    );
+    send(
+        &mut viewer,
+        json!({"type":"set_polling", "visible":false,
+        "backgroundSeconds":0,"activeSeconds":2}),
+    );
+    let error = read(&mut viewer);
+    assert_eq!(error["type"], "error");
+    assert_eq!(error["command"], "set_polling");
+    assert!(error["message"].as_str().unwrap().contains("activeSeconds"));
+    // Refresh preferences do not change the fixture's frame or navigation.
+    let mut other = engine.connect();
+    assert_eq!(read(&mut other)["type"], "hello");
+    let after = read(&mut other);
+    assert_eq!(before["frame"], after["frame"]);
+    assert_eq!(before["navigation"], after["navigation"]);
+    send(
+        &mut other,
+        json!({"type":"set_polling", "visible":false,
+        "backgroundSeconds":900,"activeSeconds":10}),
+    );
+    send(
+        &mut other,
+        json!({"type":"set_polling", "visible":"yes",
+        "backgroundSeconds":900,"activeSeconds":10}),
+    );
+    assert_eq!(read(&mut other)["type"], "error");
+}

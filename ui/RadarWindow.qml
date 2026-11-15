@@ -161,7 +161,12 @@ Item {
         shown[n - 1] = true;
         return shown;
     }
-    Engine { id: engine }
+    Engine {
+        id: engine
+        viewing: app.opened
+        backgroundRefreshSeconds: app.store.config.backgroundRefreshSeconds
+        activeRefreshSeconds: app.store.config.activeRefreshSeconds
+    }
     // Deliberate preferences and remembered view (DESIGN.md, location).
     // PluginSession owns config.toml, state.json, and the camera; this
     // window applies the view to its map and sends map-local tile requests.
@@ -234,6 +239,8 @@ Item {
         KeyMap.focusMode(config.focusMode, errors);
         KeyMap.gpsd(config.values.gpsd, errors);
         KeyMap.popoverScale(config.popoverScale, errors);
+        KeyMap.refreshSeconds(config.values.background_refresh_seconds, true, errors);
+        KeyMap.refreshSeconds(config.values.active_refresh_seconds, false, errors);
         var resolved = KeyMap.resolve(config.keys, canon);
         bindings = resolved.bindings;
         configErrors = errors.concat(resolved.errors);

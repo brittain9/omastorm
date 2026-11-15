@@ -5,6 +5,19 @@ import Quickshell.Io
 QtObject {
     id: engine
     property var state: null
+    // Each socket reports its own visible surface; the bar stays in background.
+    property bool viewing: false
+    property int backgroundRefreshSeconds: 900
+    property int activeRefreshSeconds: 10
+    property bool pollingConfig: false
+    function updatePolling() {
+        if (!pollingConfig || !socket || !socket.connected) return;
+        send({type: "set_polling", visible: viewing,
+            backgroundSeconds: backgroundRefreshSeconds, activeSeconds: activeRefreshSeconds});
+    }
+    onViewingChanged: updatePolling()
+    onBackgroundRefreshSecondsChanged: updatePolling()
+    onActiveRefreshSecondsChanged: updatePolling()
     property var sites: []
     /// Transport and parsing trouble: disconnected, unreadable message,
     /// unknown protocol version. Cleared by the next valid state.
@@ -71,6 +84,8 @@ QtObject {
                 return;
             }
             if (message.type === "hello") {
+                pollingConfig = message.pollingConfig === true;
+                updatePolling();
                 sites = message.sites;
                 sources = message.sources || [];
             }
@@ -113,6 +128,7 @@ QtObject {
             parser: SplitParser { onRead: data => engine.receive(data) }
             onConnectedChanged: {
                 if (!connected && !engine.incompatible) {
+                    engine.pollingConfig = false;
                     engine.state = null;
                     engine.error = "Radar engine disconnected. Reconnecting…";
                 }

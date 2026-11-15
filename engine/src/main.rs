@@ -8,6 +8,7 @@ mod metar;
 mod mrms;
 mod opera;
 mod osm;
+mod polling;
 mod protocol;
 mod source;
 mod sweep;
@@ -106,6 +107,7 @@ fn hello_from(registry: &source::SourceRegistry) -> Hello {
         engine: env!("CARGO_PKG_VERSION"),
         pid: std::process::id(),
         build: build_id().to_owned(),
+        polling_config: true,
         sites: registry.hello_sites(),
         sources: registry.hello_sources(),
         sites_source: table.source,
@@ -492,6 +494,8 @@ struct Shared {
     /// client that stops reading is dropped instead of blocking the others.
     clients: Vec<(u64, Sender<String>)>,
     next_client: u64,
+    polling_clients: HashMap<u64, polling::Preferences>,
+    polling: polling::Policy,
     /// The fixture frame: the engine's reflectivity vocabulary (product,
     /// palette, bounds) that live frames share.
     template: Frame,
@@ -530,6 +534,15 @@ struct Shared {
     last_broadcast: String,
 }
 impl Shared {
+    fn update_polling(&mut self) {
+        let policy = polling::effective(&self.polling_clients);
+        if policy != self.polling {
+            self.polling = policy;
+            self.abort_live();
+            self.restart_live("refresh policy changed", true);
+        }
+    }
+
     fn polar_site_id(&self) -> Option<&str> {
         match &self.state.selection {
             Some(Selection {
@@ -639,7 +652,7 @@ impl Shared {
     /// `skip_known` is true on a polar respawn so a catalogued replay is not
     /// published again.
     fn restart_live(&mut self, why: &str, skip_known: bool) {
-        if self.state.mode != Mode::Live {
+        if self.state.mode != Mode::Live || !self.polling.enabled() {
             return;
         }
         if let Some(site) = self.polar_site_id().map(str::to_owned) {
@@ -653,6 +666,7 @@ impl Shared {
                 self.events.clone(),
                 cached,
                 skip_known,
+                self.polling,
             );
             self.last_live_restart = Instant::now();
             return;
@@ -664,7 +678,9 @@ impl Shared {
             eprintln!("{} Live {}: {why}", iso(now_ms()), id);
             let events = source::GridSender::new(self.grid_events.clone(), self.grid_session);
             let retained = self.timeline.stored.iter().map(|e| e.start_ms).collect();
-            self.live = self.registry.poll_mosaic(&id, events, retained);
+            self.live = self
+                .registry
+                .poll_mosaic(&id, events, retained, self.polling);
             self.last_live_restart = Instant::now();
         }
     }
@@ -1193,7 +1209,8 @@ impl Shared {
             ),
             // Tile requests, place search, and METAR queries are answered to
             // the sender, not state.
-            Command::TilesNeeded { .. }
+            Command::SetPolling { .. }
+            | Command::TilesNeeded { .. }
             | Command::SearchPlaces { .. }
             | Command::MetarQuery { .. }
             | Command::Unsupported => {
@@ -1636,6 +1653,7 @@ fn cleanup(dir: &Path, shared: &Mutex<Shared>, retirement: &mut Retirement) -> i
 /// request goes to that client's tile task on `tiles`.
 fn receive(
     shared: &Mutex<Shared>,
+    client_id: u64,
     reply: &Sender<String>,
     tiles: &Sender<tiles::Request>,
     metars: &Arc<metar::Service>,
@@ -1651,6 +1669,27 @@ fn receive(
         // A command newer than this build; the sender is not told, since
         // ignoring it is the documented answer (docs/protocol.md).
         Ok(Command::Unsupported) => return eprintln!("Ignoring unsupported command: {kind}"),
+        Ok(Command::SetPolling {
+            visible,
+            background_seconds,
+            active_seconds,
+        }) => {
+            match (polling::Preferences {
+                visible,
+                background_seconds,
+                active_seconds,
+            })
+            .validate()
+            {
+                Ok(preferences) => {
+                    let mut shared = shared.lock().unwrap();
+                    shared.polling_clients.insert(client_id, preferences);
+                    shared.update_polling();
+                    return;
+                }
+                Err(reason) => format!("Invalid set_polling command: {reason}."),
+            }
+        }
         Ok(Command::TilesNeeded { z, x0, y0, x1, y1 }) => {
             match (tiles::Request { z, x0, y0, x1, y1 }).validate() {
                 // A full request queue means the client is flooding; the
@@ -1809,13 +1848,12 @@ fn client(
             {
                 break;
             }
-            receive(&shared, &tx, &tiles_tx, &metars, &metar_seq, &bytes);
+            receive(&shared, id, &tx, &tiles_tx, &metars, &metar_seq, &bytes);
         }
-        shared
-            .lock()
-            .unwrap()
-            .clients
-            .retain(|(client_id, _)| *client_id != id);
+        let mut shared = shared.lock().unwrap();
+        shared.clients.retain(|(client_id, _)| *client_id != id);
+        shared.polling_clients.remove(&id);
+        shared.update_polling();
         // `tx` drops here; with the clone in `clients` gone, the writer's
         // queue closes and it shuts the socket down.
     });
@@ -2071,6 +2109,8 @@ fn serve(dir: PathBuf) -> io::Result<()> {
         tiles: tile_store,
         clients: Vec::new(),
         next_client: 0,
+        polling_clients: HashMap::new(),
+        polling: polling::Policy::default(),
         template,
         sites,
         registry,
@@ -2115,6 +2155,9 @@ fn serve(dir: PathBuf) -> io::Result<()> {
             let mut shared = cleanup_shared.lock().unwrap();
             if shared.state.mode == Mode::Live {
                 shared.broadcast();
+                if shared.polling.background || !shared.polling.enabled() {
+                    continue;
+                }
                 if shared.polar_site_id().is_some()
                     && should_restart_live(
                         shared.live.as_ref().is_none_or(JoinHandle::is_finished),

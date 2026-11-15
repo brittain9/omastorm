@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import "Toml.js" as Toml
+import "Keys.js" as KeyMap
 
 // ~/.config/omastorm/config.toml (docs/protocol.md, configuration):
 // deliberate preferences — an explicit map centre, a locked radar, the
@@ -36,6 +37,8 @@ QtObject {
     readonly property var focusMode: values.focus_mode
     // The raw value; PluginSession judges it with Keys.popoverScale.
     readonly property var popoverScale: values.popover_scale
+    readonly property int backgroundRefreshSeconds: KeyMap.refreshSeconds(values.background_refresh_seconds, true, [])
+    readonly property int activeRefreshSeconds: KeyMap.refreshSeconds(values.active_refresh_seconds, false, [])
     // The `[keys]` table as action id -> value, for Keys.resolve.
     readonly property var keys: {
         var table = {};

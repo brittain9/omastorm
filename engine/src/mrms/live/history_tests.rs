@@ -80,7 +80,7 @@ fn an_hour_crosses_midnight_newest_first_and_restart_skips_retained_downloads() 
                 },
                 Arc::new(decoded),
                 Arc::new(Semaphore::new(1)),
-                POLL_INTERVAL,
+                Duration::from_secs(30),
             ));
             if initial.is_empty() {
                 for (i, expected) in retained.iter().enumerate() {
@@ -149,7 +149,7 @@ fn slow_history_download_yields_to_live_poll_and_drops_its_pending_request() {
             },
             Arc::new(decoded),
             Arc::new(Semaphore::new(1)),
-            POLL_INTERVAL,
+            Duration::from_secs(30),
         ));
         let first = rx.recv().await.unwrap();
         assert!(matches!(first.event, GridEvent::Frame { start_ms, .. } if start_ms == ms(newest)));
@@ -185,7 +185,7 @@ fn history_failures_are_isolated_and_unpublished_history_is_retried() {
                 calls.lock().unwrap().push(requested.clone());
                 async move { if requested == key(bad) { Err("history missing".into()) } else { Ok(vec![]) } }
             },
-            Arc::new(decoded), Arc::new(Semaphore::new(1)), POLL_INTERVAL,
+            Arc::new(decoded), Arc::new(Semaphore::new(1)), Duration::from_secs(30),
         ));
         let first = rx.recv().await.unwrap();
         assert!(matches!(first.event, GridEvent::Frame { .. }));
@@ -219,7 +219,7 @@ fn waiting_for_a_previous_decoder_consumes_the_history_deadline() {
             &|_| async { panic!("no history GET after its deadline") },
             Arc::new(decoded),
             Arc::clone(&work),
-            POLL_INTERVAL,
+            Duration::from_secs(30),
         )
         .await;
         assert!(result.unwrap_err().contains("timed out"));
@@ -257,7 +257,7 @@ fn previous_date_history_never_blocks_current_weather_or_reports_it_offline() {
                 |_| async { Ok(vec![]) },
                 Arc::new(decoded),
                 Arc::new(Semaphore::new(1)),
-                POLL_INTERVAL,
+                Duration::from_secs(30),
             ));
             let live = rx.recv().await.unwrap();
             assert!(
@@ -315,7 +315,7 @@ fn midnight_fallback_uses_previous_date_without_repeating_failed_current_keys() 
                 },
                 Arc::new(decoded),
                 Arc::new(Semaphore::new(1)),
-                POLL_INTERVAL,
+                Duration::from_secs(30),
             ));
             let live = rx.recv().await.unwrap();
             if bad_current < 3 {
@@ -337,5 +337,52 @@ fn midnight_fallback_uses_previous_date_without_repeating_failed_current_keys() 
             task.abort();
             let _ = task.await;
         }
+    });
+}
+
+#[test]
+fn background_refresh_waits_fifteen_minutes_and_never_backfills_history() {
+    runtime().block_on(async {
+        tokio::time::pause();
+        let newest = Utc::now().date_naive().and_hms_opt(12, 0, 7).unwrap();
+        let keys = vec![key(newest), key(newest - chrono::Duration::minutes(2))];
+        let gets = Arc::new(Mutex::new(Vec::new()));
+        let listings = Arc::new(Mutex::new(0));
+        let calls = Arc::clone(&gets);
+        let lists = Arc::clone(&listings);
+        let (tx, mut rx) = mpsc::channel(1);
+        let task = tokio::spawn(poll_loop(
+            GridSender::new(tx, 1),
+            vec![],
+            move |_, _| {
+                *lists.lock().unwrap() += 1;
+                let reply = page(&keys, None);
+                async move { Ok(reply) }
+            },
+            move |key| {
+                calls.lock().unwrap().push(key);
+                async { Ok(vec![]) }
+            },
+            Arc::new(decoded),
+            Arc::new(Semaphore::new(1)),
+            crate::polling::Policy::default(),
+        ));
+        let message = rx.recv().await.unwrap();
+        assert!(matches!(message.event, GridEvent::Frame { .. }));
+        message.published.unwrap().send(true).unwrap();
+        tokio::task::yield_now().await;
+        assert_eq!(*listings.lock().unwrap(), 1);
+        assert_eq!(*gets.lock().unwrap(), vec![key(newest)]);
+        tokio::time::advance(Duration::from_secs(899)).await;
+        tokio::task::yield_now().await;
+        assert_eq!(*listings.lock().unwrap(), 1);
+        assert!(rx.try_recv().is_err());
+        tokio::time::advance(Duration::from_secs(1)).await;
+        let message = rx.recv().await.unwrap();
+        assert!(matches!(message.event, GridEvent::Online { .. }));
+        assert_eq!(*listings.lock().unwrap(), 2);
+        assert_eq!(*gets.lock().unwrap(), vec![key(newest)]);
+        task.abort();
+        let _ = task.await;
     });
 }

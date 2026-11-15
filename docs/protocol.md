@@ -515,3 +515,29 @@ The 163-site snapshot includes archived/test sites, not an availability list.
 
 On disconnect the UI hides radar and retries; on an unknown version it
 hides radar and latches the error until relaunch.
+
+## Per-client refresh policy
+
+A supporting engine adds `"pollingConfig": true` to `hello`. Clients send the
+following after the greeting, whenever visibility or preferences change, and
+after reconnecting:
+
+```json
+{"type":"set_polling","visible":false,"backgroundSeconds":900,"activeSeconds":10}
+```
+
+This command belongs to the sending connection, not shared navigation. The bar
+reports `visible: false`; only an open popover/window reports `true`. Integer
+bounds are 0 or 60–86400 for backgroundSeconds and 5–3600 for activeSeconds.
+Invalid values are rejected only to the sender and preserve the previous policy.
+An effective policy change cancels old fetching and immediately refreshes the
+selected live source, unless background refresh is disabled. Disconnect removes
+the connection's preference; another visible connection remains active.
+Multiple connections use the shortest visible interval, or the shortest
+background interval when none are visible. No preferences means a 900-second
+background policy. Archive/fixture selections do not acquire live data.
+
+Older engines omit the capability and keep their existing behavior; clients
+must not send the command to those builds. Older clients on a new engine keep
+receiving cached state and periodic background updates. Status/age broadcasts
+remain local once-per-second bookkeeping and do not initiate network requests.

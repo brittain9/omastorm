@@ -40,6 +40,8 @@ fn harness(name: &str) -> Harness {
         tiles: tiles::Store::open(&dir, "test").unwrap(),
         clients: vec![],
         next_client: 0,
+        polling_clients: HashMap::new(),
+        polling: polling::Policy::default(),
         template,
         sites: registry.hello_sites(),
         registry,

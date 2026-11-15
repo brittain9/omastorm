@@ -119,7 +119,8 @@ those into the first live image.
 
 **5. Follow the volume**
 
-Poll step 3 every few seconds. GET only new keys. When an `E` chunk
+While a viewer is open, poll step 3 at `active_refresh_seconds` (10 seconds
+by default). GET only new keys. When an `E` chunk
 arrives, the volume is done: the next slot is the next number (or `1`
 after `999`). Return to step 1 only if the slot goes stale or the site
 has no data.
@@ -168,3 +169,10 @@ Unsigned HTTPS. Timeouts on every call. Each body is streamed with a hard
 byte cap, including when Content-Length is missing or wrong: listings stop
 at 1 MiB, the archive header keeps only the 24 bytes requested, and chunk
 objects stop at 16 MiB. Overflow is rejected before those bytes are retained.
+
+
+With no viewer, rediscover the latest volume at `background_refresh_seconds`
+(default 900), snapshot its lowest tilt, and sleep until the next refresh.
+Do not walk the previous cursor or backfill history during background snapshots.
+Opening a viewer restarts discovery immediately. See
+[configuration.md](configuration.md#radar-refresh-cadence).

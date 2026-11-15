@@ -415,3 +415,12 @@ Thanks to these people
 <!-- ALL-CONTRIBUTORS-LIST:END -->
 
 This project follows the [all-contributors](https://allcontributors.org) specification.
+
+### Radar network usage
+
+Radar refreshes default to every 15 minutes in the background and every 10
+seconds while a popover or window is open, with an immediate refresh on opening.
+Both intervals are configurable; background refresh can also be disabled. See
+[refresh configuration](docs/configuration.md#radar-refresh-cadence). This requires
+an engine advertising `pollingConfig`; the currently pinned release retains its
+existing cadence until a supporting engine is published.

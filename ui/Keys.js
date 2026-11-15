@@ -199,3 +199,14 @@ function sheet(bindings) {
         return { caps: lists.filter(list => list.length).map(list => pretty(list[0])), label: row.label + note };
     }));
 }
+
+// Refresh preferences are integer seconds; zero explicitly disables background fetches.
+function refreshSeconds(value, background, errors) {
+    var fallback = background ? 900 : 10;
+    var name = background ? "background_refresh_seconds" : "active_refresh_seconds";
+    if (value === undefined) return fallback;
+    if (typeof value === "number" && isFinite(value) && Math.floor(value) === value
+        && ((background && value === 0) || (value >= (background ? 60 : 5) && value <= (background ? 86400 : 3600)))) return value;
+    errors.push(name + (background ? " must be 0 or an integer from 60 to 86400" : " must be an integer from 5 to 3600"));
+    return fallback;
+}

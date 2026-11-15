@@ -49,7 +49,7 @@ const BODY_MAX: usize = 12 << 20;
 /// capped here (not the polar catalog ring of 60) — each COMP is multi-MB.
 pub const HISTORY_MAX: usize = 12;
 const START_TIMEOUT: Duration = Duration::from_secs(45);
-const IDLE: Duration = Duration::from_secs(30);
+
 /// After the newest COMP is on screen, pull earlier stamps (NEXRAD waits
 /// the same beat so a hand-off mid-pan does not spend bandwidth).
 const BACKFILL_DELAY: Duration = Duration::from_secs(3);
@@ -176,11 +176,16 @@ impl Opera {
         sweep::png(1, 1, &[0, 0, 0, 0]).map_err(|e| format!("encoding OPERA placeholder: {e}"))
     }
 
-    pub fn poll(&self, events: GridSender, known_keys: HashSet<String>) -> JoinHandle<()> {
+    pub fn poll(
+        &self,
+        events: GridSender,
+        known_keys: HashSet<String>,
+        polling: crate::polling::Policy,
+    ) -> JoinHandle<()> {
         let palette = self.palette.clone();
         let bounds = self.bounds.clone();
         tokio::spawn(async move {
-            poll_loop(events, known_keys, palette, bounds).await;
+            poll_loop(events, known_keys, palette, bounds, polling).await;
         })
     }
 }
@@ -722,6 +727,7 @@ async fn poll_loop(
     mut known: HashSet<String>,
     palette: Vec<String>,
     bounds: Vec<f64>,
+    polling: crate::polling::Policy,
 ) {
     let palette = Arc::new(palette);
     let bounds = Arc::new(bounds);
@@ -759,18 +765,20 @@ async fn poll_loop(
     // Same shape as NEXRAD: newest is already on screen; pull the rest of
     // the dozen in the background so play/[ ] have a loop. Held so aborting
     // this poller cancels in-flight COMP downloads.
-    let _backfill = AbortOnDrop(tokio::spawn({
-        let events = events.clone();
-        let known = known.clone();
-        let palette = Arc::clone(&palette);
-        let bounds = Arc::clone(&bounds);
-        let decode_slots = Arc::clone(&decode_slots);
-        async move {
-            backfill_loop(events, known, palette, bounds, decode_slots).await;
-        }
-    }));
+    let _backfill = (!polling.background).then(|| {
+        AbortOnDrop(tokio::spawn({
+            let events = events.clone();
+            let known = known.clone();
+            let palette = Arc::clone(&palette);
+            let bounds = Arc::clone(&bounds);
+            let decode_slots = Arc::clone(&decode_slots);
+            async move {
+                backfill_loop(events, known, palette, bounds, decode_slots).await;
+            }
+        }))
+    });
     loop {
-        sleep(IDLE).await;
+        sleep(polling.interval()).await;
         match load_newest(
             &known,
             list_http,

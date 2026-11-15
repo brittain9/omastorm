@@ -106,6 +106,7 @@ pub struct Hello {
     pub engine: &'static str,
     pub pid: u32,
     pub build: String,
+    pub polling_config: bool,
     pub sites: Vec<Station>,
     pub sources: Vec<SourceInfo>,
     pub sites_source: String,
@@ -664,6 +665,13 @@ pub struct Geometry {
 #[derive(Deserialize, PartialEq, Debug)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Command {
+    /// This connection's viewer state and refresh preferences.
+    #[serde(rename_all = "camelCase")]
+    SetPolling {
+        visible: bool,
+        background_seconds: u64,
+        active_seconds: u64,
+    },
     /// Go live on a station from the `hello` table: the newest
     /// cached frame or an empty one shows at once, and the poller follows.
     SelectSite {

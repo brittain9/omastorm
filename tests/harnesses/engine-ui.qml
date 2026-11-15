@@ -2,6 +2,27 @@ import QtQuick
 import Quickshell
 ShellRoot {
     Engine { id: engine }
+    Engine { id: pollingProbe; socketFactory: Component { MockSocket {} } }
+    function checkPollingPreferences() {
+        check(pollingProbe.socket.commands.length === 0, "Sent policy without engine capability");
+        pollingProbe.receive('{"type":"hello","v":2,"sites":[],"sources":[]}');
+        check(pollingProbe.socket.commands.length === 0, "Sent policy to an older engine");
+        pollingProbe.receive('{"type":"hello","v":2,"pollingConfig":true,"sites":[],"sources":[]}');
+        var command = pollingProbe.socket.commands[0];
+        check(command.type === "set_polling" && command.visible === false
+            && command.backgroundSeconds === 900 && command.activeSeconds === 10, "Missing default refresh preferences");
+        pollingProbe.viewing = true;
+        pollingProbe.backgroundRefreshSeconds = 0;
+        pollingProbe.activeRefreshSeconds = 5;
+        var commands = pollingProbe.socket.commands;
+        command = commands[commands.length - 1];
+        check(command.visible === true && command.backgroundSeconds === 0 && command.activeSeconds === 5,
+            "Visibility or preference edit was not sent");
+        pollingProbe.viewing = false;
+        pollingProbe.receive('{"type":"hello","v":2,"pollingConfig":true,"sites":[],"sources":[]}');
+        commands = pollingProbe.socket.commands;
+        check(commands[commands.length - 1].visible === false, "Reconnect did not restore closed-viewer policy");
+    }
     function check(ok, message) { if (!ok) throw new Error(message); }
     property string good: ""
     property var tiles: []
@@ -21,6 +42,7 @@ ShellRoot {
             check(!!basemap && basemap.ne.version.length > 0 && ["ok", "offline", "unavailable"].indexOf(basemap.osm.status) >= 0
                   && basemap.osm.source.length > 0 && typeof basemap.osm.version === "string" && basemap.osm.attribution.indexOf("OpenStreetMap") >= 0,
                   "No basemap sources in state: " + JSON.stringify(basemap));
+            checkPollingPreferences();
             good = JSON.stringify(engine.state);
             engine.receive("bad json");
             check(engine.state === null && engine.texture === "" && engine.azimuthLut === "", "Malformed state still renders");

@@ -30,7 +30,7 @@ const LISTING_MAX: usize = 2 << 20;
 const PAGES_MAX: usize = 4;
 const FALLBACK_MAX: usize = 3;
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
-const POLL_INTERVAL: Duration = Duration::from_secs(30);
+
 pub const HISTORY: HistoryPolicy = HistoryPolicy {
     max_frames: 30,
     window_ms: Some(60 * 60 * 1000),
@@ -103,7 +103,12 @@ impl Mrms {
         ))
     }
 
-    pub fn poll(&self, events: GridSender, retained: Vec<i64>) -> JoinHandle<()> {
+    pub fn poll(
+        &self,
+        events: GridSender,
+        retained: Vec<i64>,
+        polling: crate::polling::Policy,
+    ) -> JoinHandle<()> {
         let palette = Arc::clone(&self.palette);
         let bounds = Arc::clone(&self.bounds);
         tokio::spawn(poll_loop(
@@ -113,7 +118,7 @@ impl Mrms {
             get_http,
             Arc::new(move |bytes, stamp| decode_frame(bytes, stamp, &palette, &bounds)),
             Arc::clone(&self.work),
-            POLL_INTERVAL,
+            polling,
         ))
     }
 }
@@ -393,6 +398,27 @@ fn history_candidates(objects: &[Object], known: &BTreeSet<i64>) -> Vec<Object> 
         .collect()
 }
 
+struct PollInterval {
+    interval: Duration,
+    history: bool,
+}
+impl From<Duration> for PollInterval {
+    fn from(interval: Duration) -> Self {
+        Self {
+            interval,
+            history: true,
+        }
+    }
+}
+impl From<crate::polling::Policy> for PollInterval {
+    fn from(policy: crate::polling::Policy) -> Self {
+        Self {
+            interval: policy.interval(),
+            history: !policy.background,
+        }
+    }
+}
+
 async fn poll_loop<L, LF, G, GF, D>(
     events: GridSender,
     retained: Vec<i64>,
@@ -400,7 +426,7 @@ async fn poll_loop<L, LF, G, GF, D>(
     get: G,
     decode: Arc<D>,
     work: Arc<Semaphore>,
-    poll_interval: Duration,
+    polling: impl Into<PollInterval>,
 ) where
     L: Fn(NaiveDate, Option<String>) -> LF,
     LF: Future<Output = Result<Vec<u8>, String>>,
@@ -408,6 +434,10 @@ async fn poll_loop<L, LF, G, GF, D>(
     GF: Future<Output = Result<Vec<u8>, String>>,
     D: Fn(Vec<u8>, NaiveDateTime) -> Result<Decoded, String> + Send + Sync + 'static,
 {
+    let PollInterval {
+        interval: poll_interval,
+        history,
+    } = polling.into();
     let mut known: BTreeSet<i64> = retained.into_iter().collect();
     retain_known(&mut known);
     loop {
@@ -511,7 +541,9 @@ async fn poll_loop<L, LF, G, GF, D>(
             known.insert(ms);
             retain_known(&mut known);
         }
-        if let Ok(mut objects) = listed {
+        if let Ok(mut objects) = listed
+            && history
+        {
             // Publish current weather before consulting history-only prefixes.
             // A slow or broken history listing cannot change live status or
             // occupy the next live poll's interval.

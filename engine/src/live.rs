@@ -36,8 +36,6 @@ pub const BUCKET: &str = "unidata-nexrad-level2-chunks";
 /// One archive listing, one 24-byte header range-get, and up to three slot listings.
 const START_TIMEOUT: Duration = Duration::from_secs(30);
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
-/// Between empty polls. Chunks land every 4–12 s.
-const IDLE: Duration = Duration::from_secs(2);
 /// After a failed call; doubles up to the maximum while the bucket stays
 /// unreachable. One failure is retried quietly; the second in a row reports
 /// `offline`, and this many start over from discovery. A connection reset
@@ -548,6 +546,7 @@ struct Cursor {
     sequence: usize,
     ended: bool,
     pending: VecDeque<ChunkIdentifier>,
+    cadence: crate::polling::Cadence,
 }
 
 impl Cursor {
@@ -558,6 +557,7 @@ impl Cursor {
             sequence: newest.sequence(),
             ended: newest.chunk_type() == ChunkType::End,
             pending: VecDeque::new(),
+            cadence: crate::polling::Cadence::new(),
         }
     }
 
@@ -611,7 +611,13 @@ impl Cursor {
 /// station, so the backfill does not fetch them again and a rediscovery
 /// does not republish them. `skip_known` is true when this poller is a
 /// respawn on a station already on screen (cleanup or reselect).
-pub async fn poll(site: String, events: Sender<Event>, cached: Vec<i64>, skip_known: bool) {
+pub async fn poll(
+    site: String,
+    events: Sender<Event>,
+    cached: Vec<i64>,
+    skip_known: bool,
+    polling: crate::polling::Policy,
+) {
     let mut back_off = BACK_OFF;
     let mut backfilling: Option<AbortOnDrop> = None;
     let mut known = cached;
@@ -640,7 +646,12 @@ pub async fn poll(site: String, events: Sender<Event>, cached: Vec<i64>, skip_kn
                 if !reported {
                     return;
                 }
-                sleep(back_off).await;
+                sleep(if polling.background {
+                    polling.interval()
+                } else {
+                    back_off.max(polling.interval())
+                })
+                .await;
                 back_off = (back_off * 2).min(MAX_BACK_OFF);
                 continue;
             }
@@ -673,7 +684,7 @@ pub async fn poll(site: String, events: Sender<Event>, cached: Vec<i64>, skip_kn
                 replay.len()
             ),
         );
-        if backfilling.is_none() {
+        if !polling.background && backfilling.is_none() {
             backfilling = Some(AbortOnDrop(tokio::spawn(backfill(
                 site.clone(),
                 events.clone(),
@@ -690,21 +701,31 @@ pub async fn poll(site: String, events: Sender<Event>, cached: Vec<i64>, skip_kn
             }
         }
         if let Some(start_ms) = assembler.start_ms()
+            // A short background interval may revisit this same growing cut.
+            // Only a complete snapshot may suppress a subsequent replay.
+            && (!polling.background || assembler.done)
             && !known.contains(&start_ms)
         {
             known.push(start_ms);
         }
         skip_known = true;
+        // A background refresh snapshots the newest volume, then goes quiet.
+        // Rediscover next time rather than walking fifteen minutes of old chunks.
+        if polling.background {
+            sleep(polling.interval()).await;
+            continue;
+        }
 
         let mut failures = Failures::default();
-        let mut deadline = Instant::now() + QUIET_RESTART;
+        let quiet_restart = QUIET_RESTART.max(polling.interval() + CALL_TIMEOUT);
+        let mut deadline = Instant::now() + quiet_restart;
         loop {
             let next = wait_for_progress(deadline, cursor, async |mut cursor| {
+                if cursor.pending.is_empty() {
+                    cursor.cadence.wait(polling.interval()).await;
+                }
                 let result = match timeout(CALL_TIMEOUT, cursor.next(&site)).await {
-                    Ok(Ok(None)) => {
-                        sleep(IDLE).await;
-                        None
-                    }
+                    Ok(Ok(None)) => None,
                     result => Some(result),
                 };
                 (cursor, result)
@@ -715,7 +736,7 @@ pub async fn poll(site: String, events: Sender<Event>, cached: Vec<i64>, skip_kn
                     &site,
                     format_args!(
                         "no chunk progress for {}s; rediscovering latest volume",
-                        QUIET_RESTART.as_secs()
+                        quiet_restart.as_secs()
                     ),
                 );
                 break;
@@ -729,7 +750,7 @@ pub async fn poll(site: String, events: Sender<Event>, cached: Vec<i64>, skip_kn
                     if Utc::now().naive_utc() - *chunk.identifier.date_time_prefix()
                         < chrono::Duration::minutes(30)
                     {
-                        deadline = Instant::now() + QUIET_RESTART;
+                        deadline = Instant::now() + quiet_restart;
                     }
                     if !deliver(&mut assembler, &site, &chunk, &events, None).await {
                         return;
@@ -757,7 +778,7 @@ pub async fn poll(site: String, events: Sender<Event>, cached: Vec<i64>, skip_kn
             if failures.restart() {
                 break;
             }
-            sleep(BACK_OFF).await;
+            sleep(BACK_OFF.max(polling.interval())).await;
         }
     }
 }

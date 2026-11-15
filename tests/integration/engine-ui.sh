@@ -7,6 +7,8 @@ check_dir="$PWD/target/check-engine-ui"
 mkdir -p "$check_dir"
 stage_ui "$check_dir"
 cp tests/harnesses/engine-ui.qml "$check_dir/shell.qml"
+cp tests/harnesses/MockSocket.qml "$check_dir/MockSocket.qml"
+printf 'MockSocket 1.0 MockSocket.qml\n' >> "$check_dir/qmldir"
 OMASTORM_QML="$check_dir/shell.qml" bash run.sh > "$check_dir/result.log" 2>&1
 cat "$check_dir/result.log"
 rg -q ENGINE_UI_PASSED "$check_dir/result.log"

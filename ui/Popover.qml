@@ -48,7 +48,12 @@ FocusScope {
     // Do not track layout.implicitHeight — time labels and status text
     // settling after open made the panel shrink and grow.
     implicitHeight: px(KeyMap.POPOVER_HEIGHT)
-    Engine { id: connection }
+    Engine {
+        id: connection
+        viewing: card.visible
+        backgroundRefreshSeconds: card.session.config.backgroundRefreshSeconds
+        activeRefreshSeconds: card.session.config.activeRefreshSeconds
+    }
     function step(delta) { if (state) connection.send({type: "step", delta: delta}); }
     function play() { if (state) connection.send({type: state.playing ? "pause" : "play"}); }
     // Harnesses read this surface's METAR state.

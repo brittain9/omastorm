@@ -281,3 +281,37 @@ verified.
 `OMASTORM_STATE` names another state file for checks. `OMASTORM_LOCATION`
 names another weather.json (`name`, `latitude`, `longitude`, written by the
 shell's weather panel) for checks; coordinates outside ±90/±180 are ignored.
+
+## Radar refresh cadence
+
+The engine refreshes the newest radar picture every 15 minutes while no viewer
+is open. Opening a popover or window immediately refreshes the live source;
+while at least one viewer is open, update checks run every 10 seconds.
+Put these top-level preferences before any TOML table headers:
+
+```toml
+background_refresh_seconds = 900
+active_refresh_seconds = 10
+```
+
+`background_refresh_seconds` accepts integer seconds from 60 to 86400, or `0`
+to disable background radar downloads. `active_refresh_seconds` accepts integer
+seconds from 5 to 3600. Invalid values fall back to their defaults and are named
+in the window's configuration status. Edits apply without restarting.
+
+Background NEXRAD refreshes rediscover the newest volume instead of walking the
+old chunk backlog. NEXRAD, OPERA and MRMS skip history backfill while closed;
+opening a viewer enables their normal bounded playback history. A refresh may
+need several HTTP requests to find, download and decode one picture; the interval
+controls update checks, not each request in a batch. Map tiles and optional
+METARs retain their separate on-demand/cache rules. Scan ages continue to advance
+while closed; a cached picture can correctly become STALE between refreshes.
+
+Preferences apply per connection. Any visible viewer keeps the engine active;
+with several viewers, the shortest requested active interval wins. With no
+visible viewer, the shortest configured background interval wins (including
+`0`); connections that have not sent preferences do not override them. With no
+preferences at all, the engine uses the 900-second background default. Closing
+the last viewer cancels its live/history work and starts a background snapshot.
+The published engine without `hello.pollingConfig` keeps its existing cadence;
+these settings require an engine advertising that capability.

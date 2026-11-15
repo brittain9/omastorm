@@ -237,9 +237,10 @@ impl SourceRegistry {
         id: &str,
         events: GridSender,
         retained: Vec<i64>,
+        polling: crate::polling::Policy,
     ) -> Option<JoinHandle<()>> {
         match self.get(id)? {
-            AdapterRef::Grid(grid) => grid.poll(events, retained),
+            AdapterRef::Grid(grid) => grid.poll(events, retained, polling),
             AdapterRef::Nexrad(_) => None,
         }
     }
@@ -370,10 +371,15 @@ impl<'a> GridRef<'a> {
         matches!(self, Self::Opera(_) | Self::Mrms(_))
     }
 
-    fn poll(&self, events: GridSender, retained: Vec<i64>) -> Option<JoinHandle<()>> {
+    fn poll(
+        &self,
+        events: GridSender,
+        retained: Vec<i64>,
+        polling: crate::polling::Policy,
+    ) -> Option<JoinHandle<()>> {
         match self {
-            Self::Opera(a) => Some(a.poll(events, Default::default())),
-            Self::Mrms(a) => Some(a.poll(events, retained)),
+            Self::Opera(a) => Some(a.poll(events, Default::default(), polling)),
+            Self::Mrms(a) => Some(a.poll(events, retained, polling)),
             Self::FixtureMosaic(_) => None,
         }
     }
@@ -466,11 +472,18 @@ impl Nexrad {
         events: mpsc::Sender<live::Event>,
         cached: Vec<i64>,
         skip_known: bool,
+        polling: crate::polling::Policy,
     ) -> Option<JoinHandle<()>> {
         match target {
-            AdapterTarget::Site { site_id } if self.station(site_id).is_some() => Some(
-                tokio::spawn(live::poll(site_id.clone(), events, cached, skip_known)),
-            ),
+            AdapterTarget::Site { site_id } if self.station(site_id).is_some() => {
+                Some(tokio::spawn(live::poll(
+                    site_id.clone(),
+                    events,
+                    cached,
+                    skip_known,
+                    polling,
+                )))
+            }
             _ => None,
         }
     }
